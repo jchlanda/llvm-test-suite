@@ -204,7 +204,7 @@ void test() {
                 sg, sub_c, accD.get_pointer() + (m * M) * Big_N + n * N, Big_N);
           });
 
-    q.wait();
+      q.wait();
   }
 
   for (int m = 0; m < Big_M; m++)
@@ -219,7 +219,7 @@ void test() {
                 matrix_ref_mn<T1, T2, Big_N, Big_K>(m, n, A, B, C)));
       }
     }
-};
+  };
 
 int main() {
 
