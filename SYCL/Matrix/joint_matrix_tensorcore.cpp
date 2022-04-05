@@ -123,97 +123,99 @@ void test() {
       B[i] = i % 100;
     }
   }
-{
-  buffer<T1, 1> bufA(A, range<1>(Big_M * Big_K));
-  buffer<T1, 1> bufB(B, range<1>(Big_K * Big_N));
-  buffer<T2, 1> bufC(C, range<1>(Big_M * Big_N));
-  buffer<T2, 1> bufD(D, range<1>(Big_M * Big_N));
+  {
+    buffer<T1, 1> bufA(A, range<1>(Big_M * Big_K));
+    buffer<T1, 1> bufB(B, range<1>(Big_K * Big_N));
+    buffer<T2, 1> bufC(C, range<1>(Big_M * Big_N));
+    buffer<T2, 1> bufD(D, range<1>(Big_M * Big_N));
 
-  queue q;
-  // currently bfloat16 has to be initialized on device
-  if constexpr (std::is_same<T1, bfloat16>::value) {
-    q.submit([&](handler &cgh) {
-      auto accA = bufA.template get_access<access::mode::write>(cgh);
-
-      cgh.parallel_for<KernelName<bfloat16, class copyA, M, K, N>>(
-          range<1>(Big_M * Big_K), [=](item<1> item) {
-            auto i = item.get_linear_id();
-            accA[i] = 0.1f * (i % 10);
-          });
-    });
-
-    q.submit([&](handler &cgh) {
-      auto accB = bufB.template get_access<access::mode::write>(cgh);
-
-      cgh.parallel_for<KernelName<bfloat16, class copyB, M, K, N>>(
-          range<1>(Big_K * Big_N), [=](item<1> item) {
-            auto i = item.get_linear_id();
-            accB[i] = 0.1f * (i % 10);
-          });
-    });
-  }
-
-  q.submit([&](handler &cgh) {
-    auto accC = bufC.template get_access<access::mode::read_write>(cgh);
-    auto accA = bufA.template get_access<access::mode::read_write>(cgh);
-    auto accB = bufB.template get_access<access::mode::read_write>(cgh);
-    auto accD = bufD.template get_access<access::mode::read_write>(cgh);
-
-    range<2> LocalRange = {1, N_THREADS_PER_MATRIX_OP};
-    range<2> GlobalRange = {Sub_Tiles_M, Sub_Tiles_N * N_THREADS_PER_MATRIX_OP};
-
-    cgh.parallel_for<
-        KernelName<T1, T2, M, K, N>>(nd_range<2>(GlobalRange, LocalRange), [=
-    ](nd_item<2> item)[[sycl::reqd_work_group_size(1, 1, 32)]] {
-      sycl::sub_group sg = item.get_sub_group();
-      const auto m =
-          item.get_group()
-              .get_group_id()[0]; // row id of current submatrix of BIG C matrix
-      const auto n =
-          item.get_group().get_group_id()[1]; // column id of current
-                                              // submatrix of BIG C matrix
-
-      joint_matrix<T1, matrix_use::a, M, K, matrix_layout::row_major> sub_a;
-
-      joint_matrix<T1, matrix_use::b, K, N, matrix_layout::row_major> sub_b;
-
-      joint_matrix<T2, matrix_use::accumulator, M, N, matrix_layout::row_major>
-          sub_c;
-
-      joint_matrix_load(sg, sub_c, accC.get_pointer() + (m * M) * Big_N + n * N,
-                        Big_N);
-
-      for (int k = 0; k < Sub_Tiles_K;
-           k++) // row/col id of current submatrix of BIG A/B matrices
-      {
-        joint_matrix_load(
-            sg, sub_a, accA.get_pointer() + (k * K) + (m * M * Big_K), Big_K);
-
-        joint_matrix_load(
-            sg, sub_b, accB.get_pointer() + (k * K * Big_N) + (n * N), Big_N);
-
-        sub_c = joint_matrix_mad(sg, sub_a, sub_b, sub_c);
-      }
-      joint_matrix_store(sg, sub_c,
-                         accD.get_pointer() + (m * M) * Big_N + n * N, Big_N);
-    });
-  });
-
-  q.wait();
-}
-
-for (int m = 0; m < Big_M; m++)
-  for (int n = 0; n < Big_N; n++) {
+    queue q;
+    // currently bfloat16 has to be initialized on device
     if constexpr (std::is_same<T1, bfloat16>::value) {
-      auto res_device = matrix_ref_mn<T1, T2, Big_N, Big_K>(m, n, A, B, C);
-      assert(fabs(2 * (D[m * Big_N + n] - res_device)) /
-                 (D[m * Big_N + n] + res_device) <
-             bf16_eps * 2);
-    } else {
-      assert((D[m * Big_N + n] ==
-              matrix_ref_mn<T1, T2, Big_N, Big_K>(m, n, A, B, C)));
+      q.submit([&](handler &cgh) {
+        auto accA = bufA.template get_access<access::mode::write>(cgh);
+
+        cgh.parallel_for<KernelName<bfloat16, class copyA, M, K, N>>(
+            range<1>(Big_M * Big_K), [=](item<1> item) {
+              auto i = item.get_linear_id();
+              accA[i] = 0.1f * (i % 10);
+            });
+      });
+
+      q.submit([&](handler &cgh) {
+        auto accB = bufB.template get_access<access::mode::write>(cgh);
+
+        cgh.parallel_for<KernelName<bfloat16, class copyB, M, K, N>>(
+            range<1>(Big_K * Big_N), [=](item<1> item) {
+              auto i = item.get_linear_id();
+              accB[i] = 0.1f * (i % 10);
+            });
+      });
     }
+
+    q.submit([&](handler &cgh) {
+      auto accC = bufC.template get_access<access::mode::read_write>(cgh);
+      auto accA = bufA.template get_access<access::mode::read_write>(cgh);
+      auto accB = bufB.template get_access<access::mode::read_write>(cgh);
+      auto accD = bufD.template get_access<access::mode::read_write>(cgh);
+
+      range<2> LocalRange = {1, N_THREADS_PER_MATRIX_OP};
+      range<2> GlobalRange = {Sub_Tiles_M,
+                              Sub_Tiles_N * N_THREADS_PER_MATRIX_OP};
+
+      cgh.parallel_for<
+          KernelName<T1, T2, M, K, N>>(nd_range<2>(GlobalRange, LocalRange), [=
+      ](nd_item<2> item)[[sycl::reqd_work_group_size(1, 1, 32)]] {
+        sycl::sub_group sg = item.get_sub_group();
+        const auto m =
+            item.get_group().get_group_id()[0]; // row id of current submatrix
+                                                // of BIG C matrix
+        const auto n =
+            item.get_group().get_group_id()[1]; // column id of current
+                                                // submatrix of BIG C matrix
+
+        joint_matrix<T1, matrix_use::a, M, K, matrix_layout::row_major> sub_a;
+
+        joint_matrix<T1, matrix_use::b, K, N, matrix_layout::row_major> sub_b;
+
+        joint_matrix<T2, matrix_use::accumulator, M, N,
+                     matrix_layout::row_major>
+            sub_c;
+
+        joint_matrix_load(sg, sub_c,
+                          accC.get_pointer() + (m * M) * Big_N + n * N, Big_N);
+
+        for (int k = 0; k < Sub_Tiles_K;
+             k++) // row/col id of current submatrix of BIG A/B matrices
+        {
+          joint_matrix_load(
+              sg, sub_a, accA.get_pointer() + (k * K) + (m * M * Big_K), Big_K);
+
+          joint_matrix_load(
+              sg, sub_b, accB.get_pointer() + (k * K * Big_N) + (n * N), Big_N);
+
+          sub_c = joint_matrix_mad(sg, sub_a, sub_b, sub_c);
+        }
+        joint_matrix_store(sg, sub_c,
+                           accD.get_pointer() + (m * M) * Big_N + n * N, Big_N);
+      });
+    });
+
+    q.wait();
   }
+
+  for (int m = 0; m < Big_M; m++)
+    for (int n = 0; n < Big_N; n++) {
+      if constexpr (std::is_same<T1, bfloat16>::value) {
+        auto res_device = matrix_ref_mn<T1, T2, Big_N, Big_K>(m, n, A, B, C);
+        assert(fabs(2 * (D[m * Big_N + n] - res_device)) /
+                   (D[m * Big_N + n] + res_device) <
+               bf16_eps * 2);
+      } else {
+        assert((D[m * Big_N + n] ==
+                matrix_ref_mn<T1, T2, Big_N, Big_K>(m, n, A, B, C)));
+      }
+    }
 };
 
 int main() {
