@@ -82,7 +82,7 @@ T2 matrix_ref_mn(const int &m, const int &n, T1 *A, T1 *B, T2 *C) {
 
 template <typename T1, typename T2, size_t Sub_Tiles_M, size_t Sub_Tiles_K,
           size_t Sub_Tiles_N, size_t M, size_t K, size_t N>
-void test(queue& q) {
+void test(queue &q) {
 
   constexpr auto Big_M =
       Sub_Tiles_M *
@@ -200,11 +200,11 @@ void test(queue& q) {
             joint_matrix_store(
                 sg, sub_c, accD.get_pointer() + (m * M) * Big_N + n * N, Big_N);
           });
-      });
-      q.wait();
+    });
+    q.wait();
   }
 
-  for (int m = 0; m < Big_M; m++)
+  for (int m = 0; m < Big_M; m++) {
     for (int n = 0; n < Big_N; n++) {
       if constexpr (std::is_same<T1, bfloat16>::value) {
         auto res_device = matrix_ref_mn<T1, T2, Big_N, Big_K>(m, n, A, B, C);
@@ -216,7 +216,8 @@ void test(queue& q) {
                 matrix_ref_mn<T1, T2, Big_N, Big_K>(m, n, A, B, C)));
       }
     }
-  };
+  }
+};
 
 int main() {
 
