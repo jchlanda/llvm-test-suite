@@ -1,8 +1,6 @@
 // REQUIRES: cuda
 // RUN: %clangxx -fsycl -fsycl-targets=%sycl_triple %s -o %t.out -Xsycl-target-backend --cuda-gpu-arch=sm_80
-// TODO: Currently the CI does not have a sm_80 capable machine. Enable the test
-// execution once it does.
-// RUNx: %t.out
+// RUN: %t.out
 
 #include <CL/sycl.hpp>
 
@@ -100,19 +98,26 @@ bool check(float a, float b) {
 
 int main() {
   queue q;
-  std::vector<float> a(N), b(N), c(N);
-  int err = 0;
 
-  for (int i = 0; i < N; i++) {
-    a[i] = (i - N / 2) / (float)N;
-    b[i] = (N / 2 - i) / (float)N;
-    c[i] = (float)(3 * i);
+  auto computeCapability =
+      std::stof(q.get_device().get_info<sycl::info::device::backend_version>());
+  // TODO check for "ext_oneapi_bfloat16" aspect instead once aspect is
+  // supported. Since this test only covers CUDA the current check is
+  // functionally equivalent to "ext_oneapi_bfloat16".
+  if (computeCapability >= 8.0) {
+    std::vector<float> a(N), b(N), c(N);
+    int err = 0;
+
+    for (int i = 0; i < N; i++) {
+      a[i] = (i - N / 2) / (float)N;
+      b[i] = (N / 2 - i) / (float)N;
+      c[i] = (float)(3 * i);
+    }
+
+    TEST_BUILTIN_1(fabs);
+    TEST_BUILTIN_2(fmin);
+    TEST_BUILTIN_2(fmax);
+    TEST_BUILTIN_3(fma);
   }
-
-  TEST_BUILTIN_1(fabs);
-  TEST_BUILTIN_2(fmin);
-  TEST_BUILTIN_2(fmax);
-  TEST_BUILTIN_3(fma);
-
   return 0;
 }
