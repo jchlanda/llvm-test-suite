@@ -46,17 +46,17 @@ class TypeHelper;
 template <typename T1, typename T2, size_t M, size_t K, size_t N>
 using KernelName = class TypeHelper<T1, T2, M, K, N>;
 
-float make_fp32(short x) {
-  unsigned int y = x;
+float make_fp32(uint16_t x) {
+  uint32_t y = x;
   y = y << 16;
-  float *res = reinterpret_cast<float *>(&y);
+  auto res = reinterpret_cast<float *>(&y);
   return *res;
 }
 
-unsigned short make_bf16(float x) {
-  int *res = reinterpret_cast<int *>(&x);
+uint16_t make_bf16(float x) {
+  auto res = reinterpret_cast<int32_t *>(&x);
   *res = *res >> 16;
-  return (unsigned short)*res;
+  return (uint16_t)*res;
 }
 
 template <typename T1, typename T2, size_t Big_N, size_t Big_K>
@@ -130,7 +130,8 @@ void test(queue &q) {
     // currently bfloat16 has to be initialized on device
     if constexpr (std::is_same<T1, bfloat16>::value) {
       q.submit([&](handler &cgh) {
-        auto accA = bufA.template get_access<access::mode::write>(cgh);
+        accessor<T1, 1, access::mode::read_write, target::device>
+            accA(bufA, cgh);
 
         cgh.parallel_for<KernelName<bfloat16, class copyA, M, K, N>>(
             range<1>(Big_M * Big_K), [=](item<1> item) {
@@ -140,7 +141,8 @@ void test(queue &q) {
       });
 
       q.submit([&](handler &cgh) {
-        auto accB = bufB.template get_access<access::mode::write>(cgh);
+        accessor<T1, 1, access::mode::read_write, target::device>
+            accB(bufB, cgh);
 
         cgh.parallel_for<KernelName<bfloat16, class copyB, M, K, N>>(
             range<1>(Big_K * Big_N), [=](item<1> item) {
@@ -151,10 +153,14 @@ void test(queue &q) {
     }
 
     q.submit([&](handler &cgh) {
-      auto accC = bufC.template get_access<access::mode::read_write>(cgh);
-      auto accA = bufA.template get_access<access::mode::read_write>(cgh);
-      auto accB = bufB.template get_access<access::mode::read_write>(cgh);
-      auto accD = bufD.template get_access<access::mode::read_write>(cgh);
+    accessor<T1, 1, access::mode::read_write, target::device>
+        accA(bufA, cgh);
+    accessor<T1, 1, access::mode::read_write, target::device>
+        accB(bufB, cgh);
+    accessor<T2, 1, access::mode::read_write, target::device>
+        accC(bufC, cgh);
+    accessor<T2, 1, access::mode::read_write, target::device>
+        accD(bufD, cgh);
 
       range<2> LocalRange = {1, N_THREADS_PER_MATRIX_OP};
       range<2> GlobalRange = {Sub_Tiles_M,
@@ -162,8 +168,8 @@ void test(queue &q) {
 
       cgh.parallel_for<KernelName<T1, T2, M, K, N>>(
           nd_range<2>(GlobalRange, LocalRange),
-          [=](nd_item<2> item) [[sycl::reqd_work_group_size(1, 1, 32)]] {
-            sycl::sub_group sg = item.get_sub_group();
+          [=](nd_item<2> item) {
+            sub_group sg = item.get_sub_group();
             const auto m =
                 item.get_group().get_group_id()[0]; // row id of current
                                                     // submatrix of BIG C matrix
@@ -223,7 +229,7 @@ int main() {
 
   queue Q;
   auto computeCapability =
-      std::stof(Q.get_device().get_info<sycl::info::device::backend_version>());
+      std::stof(Q.get_device().get_info<info::device::backend_version>());
 
   if (computeCapability >= 7.0) {
     // A/B half, Accumulator float

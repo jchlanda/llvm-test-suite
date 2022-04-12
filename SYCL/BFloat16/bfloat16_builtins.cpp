@@ -10,20 +10,14 @@
 using namespace cl::sycl;
 using sycl::ext::oneapi::experimental::bfloat16;
 
-constexpr int N = 16 * 3; // divisible by all vector sizes
+constexpr int N = 60; // divisible by all tested array sizes
 constexpr float bf16_eps = 0.00390625;
 
-union conv {
-  float f;
-  vec<uint16_t, 2> u;
-  uint32_t u2;
-};
-
-float from_bf16(uint16_t x) {
-  conv c;
-  c.u.y() = x;
-  c.u.x() = 0;
-  return c.f;
+float make_fp32(uint16_t x) {
+  uint32_t y = x;
+  y = y << 16;
+  auto res = reinterpret_cast<float *>(&y);
+  return *res;
 }
 
 bool check(float a, float b) {
@@ -35,10 +29,11 @@ bool check(float a, float b) {
     buffer<float> a_buf(&a[0], N);                                             \
     buffer<int> err_buf(&err, 1);                                              \
     q.submit([&](handler &cgh) {                                               \
-      auto A = a_buf.get_access<access::mode::read_write>(cgh);                \
-      auto ERR = err_buf.get_access<access::mode::write>(cgh);                 \
+      accessor<float, 1, access::mode::read_write, target::device> A(a_buf,    \
+                                                                     cgh);     \
+      accessor<int, 1, access::mode::write, target::device> ERR(err_buf, cgh); \
       cgh.parallel_for(N, [=](id<1> index) {                                   \
-        if (check(from_bf16(NAME(bfloat16{A[index]}).raw()),                   \
+        if (check(make_fp32(NAME(bfloat16{A[index]}).raw()),                   \
                   NAME(A[index]))) {                                           \
           ERR[0] = 1;                                                          \
         }                                                                      \
@@ -47,7 +42,37 @@ bool check(float a, float b) {
   }                                                                            \
   assert(err == 0);
 
-#define TEST_BUILTIN_1(NAME) TEST_BUILTIN_1_SCAL_IMPL(NAME)
+#define TEST_BUILTIN_1_ARR_IMPL(NAME, SZ)                                      \
+  {                                                                            \
+    buffer<float, 2> a_buf{range<2>{N / SZ, SZ}};                              \
+    buffer<int> err_buf(&err, 1);                                              \
+    q.submit([&](handler &cgh) {                                               \
+      accessor<float, 2, access::mode::read_write, target::device> A(a_buf,    \
+                                                                     cgh);     \
+      accessor<int, 1, access::mode::write, target::device> ERR(err_buf, cgh); \
+      cgh.parallel_for(N / SZ, [=](id<1> index) {                              \
+        marray<bfloat16, SZ> arg;                                              \
+        for (int i = 0; i < SZ; i++) {                                         \
+          arg[i] = A[index][i];                                                \
+        }                                                                      \
+        marray<bfloat16, SZ> res = NAME(arg);                                  \
+        for (int i = 0; i < SZ; i++) {                                         \
+          if (check(make_fp32(res[i].raw()), NAME(A[index][i]))) {             \
+            ERR[0] = 1;                                                        \
+          }                                                                    \
+        }                                                                      \
+      });                                                                      \
+    });                                                                        \
+  }                                                                            \
+  assert(err == 0);
+
+#define TEST_BUILTIN_1(NAME)                                                   \
+  TEST_BUILTIN_1_SCAL_IMPL(NAME)                                               \
+  TEST_BUILTIN_1_ARR_IMPL(NAME, 1)                                             \
+  TEST_BUILTIN_1_ARR_IMPL(NAME, 2)                                             \
+  TEST_BUILTIN_1_ARR_IMPL(NAME, 3)                                             \
+  TEST_BUILTIN_1_ARR_IMPL(NAME, 4)                                             \
+  TEST_BUILTIN_1_ARR_IMPL(NAME, 5)
 
 #define TEST_BUILTIN_2_SCAL_IMPL(NAME)                                         \
   {                                                                            \
@@ -55,12 +80,14 @@ bool check(float a, float b) {
     buffer<float> b_buf(&b[0], N);                                             \
     buffer<int> err_buf(&err, 1);                                              \
     q.submit([&](handler &cgh) {                                               \
-      auto A = a_buf.get_access<access::mode::read>(cgh);                      \
-      auto B = b_buf.get_access<access::mode::read>(cgh);                      \
-      auto ERR = err_buf.get_access<access::mode::write>(cgh);                 \
+      accessor<float, 1, access::mode::read_write, target::device> A(a_buf,    \
+                                                                     cgh);     \
+      accessor<float, 1, access::mode::read_write, target::device> B(b_buf,    \
+                                                                     cgh);     \
+      accessor<int, 1, access::mode::write, target::device> ERR(err_buf, cgh); \
       cgh.parallel_for(N, [=](id<1> index) {                                   \
         if (check(                                                             \
-                from_bf16(NAME(bfloat16{A[index]}, bfloat16{B[index]}).raw()), \
+                make_fp32(NAME(bfloat16{A[index]}, bfloat16{B[index]}).raw()), \
                 NAME(A[index], B[index]))) {                                   \
           ERR[0] = 1;                                                          \
         }                                                                      \
@@ -69,7 +96,42 @@ bool check(float a, float b) {
   }                                                                            \
   assert(err == 0);
 
-#define TEST_BUILTIN_2(NAME) TEST_BUILTIN_2_SCAL_IMPL(NAME)
+#define TEST_BUILTIN_2_ARR_IMPL(NAME, SZ)                                      \
+  {                                                                            \
+    buffer<float, 2> a_buf{range<2>{N / SZ, SZ}};                              \
+    buffer<float, 2> b_buf{range<2>{N / SZ, SZ}};                              \
+    buffer<int> err_buf(&err, 1);                                              \
+    q.submit([&](handler &cgh) {                                               \
+      accessor<float, 2, access::mode::read_write, target::device> A(a_buf,    \
+                                                                     cgh);     \
+      accessor<float, 2, access::mode::read_write, target::device> B(b_buf,    \
+                                                                     cgh);     \
+      accessor<int, 1, access::mode::write, target::device> ERR(err_buf, cgh); \
+      cgh.parallel_for(N / SZ, [=](id<1> index) {                              \
+        marray<bfloat16, SZ> arg0, arg1;                                       \
+        for (int i = 0; i < SZ; i++) {                                         \
+          arg0[i] = A[index][i];                                               \
+          arg1[i] = B[index][i];                                               \
+        }                                                                      \
+        marray<bfloat16, SZ> res = NAME(arg0, arg1);                           \
+        for (int i = 0; i < SZ; i++) {                                         \
+          if (check(make_fp32(res[i].raw()),                                   \
+                    NAME(A[index][i], B[index][i]))) {                         \
+            ERR[0] = 1;                                                        \
+          }                                                                    \
+        }                                                                      \
+      });                                                                      \
+    });                                                                        \
+  }                                                                            \
+  assert(err == 0);
+
+#define TEST_BUILTIN_2(NAME)                                                   \
+  TEST_BUILTIN_2_SCAL_IMPL(NAME)                                               \
+  TEST_BUILTIN_2_ARR_IMPL(NAME, 1)                                             \
+  TEST_BUILTIN_2_ARR_IMPL(NAME, 2)                                             \
+  TEST_BUILTIN_2_ARR_IMPL(NAME, 3)                                             \
+  TEST_BUILTIN_2_ARR_IMPL(NAME, 4)                                             \
+  TEST_BUILTIN_2_ARR_IMPL(NAME, 5)
 
 #define TEST_BUILTIN_3_SCAL_IMPL(NAME)                                         \
   {                                                                            \
@@ -78,12 +140,15 @@ bool check(float a, float b) {
     buffer<float> c_buf(&c[0], N);                                             \
     buffer<int> err_buf(&err, 1);                                              \
     q.submit([&](handler &cgh) {                                               \
-      auto A = a_buf.get_access<access::mode::read>(cgh);                      \
-      auto B = b_buf.get_access<access::mode::read>(cgh);                      \
-      auto C = c_buf.get_access<access::mode::read>(cgh);                      \
-      auto ERR = err_buf.get_access<access::mode::write>(cgh);                 \
+      accessor<float, 1, access::mode::read_write, target::device> A(a_buf,    \
+                                                                     cgh);     \
+      accessor<float, 1, access::mode::read_write, target::device> B(b_buf,    \
+                                                                     cgh);     \
+      accessor<float, 1, access::mode::read_write, target::device> C(c_buf,    \
+                                                                     cgh);     \
+      accessor<int, 1, access::mode::write, target::device> ERR(err_buf, cgh); \
       cgh.parallel_for(N, [=](id<1> index) {                                   \
-        if (check(from_bf16(NAME(bfloat16{A[index]}, bfloat16{B[index]},       \
+        if (check(make_fp32(NAME(bfloat16{A[index]}, bfloat16{B[index]},       \
                                  bfloat16{C[index]})                           \
                                 .raw()),                                       \
                   NAME(A[index], B[index], C[index]))) {                       \
@@ -94,7 +159,46 @@ bool check(float a, float b) {
   }                                                                            \
   assert(err == 0);
 
-#define TEST_BUILTIN_3(NAME) TEST_BUILTIN_3_SCAL_IMPL(NAME)
+#define TEST_BUILTIN_3_ARR_IMPL(NAME, SZ)                                      \
+  {                                                                            \
+    buffer<float, 2> a_buf{range<2>{N / SZ, SZ}};                              \
+    buffer<float, 2> b_buf{range<2>{N / SZ, SZ}};                              \
+    buffer<float, 2> c_buf{range<2>{N / SZ, SZ}};                              \
+    buffer<int> err_buf(&err, 1);                                              \
+    q.submit([&](handler &cgh) {                                               \
+      accessor<float, 2, access::mode::read_write, target::device> A(a_buf,    \
+                                                                     cgh);     \
+      accessor<float, 2, access::mode::read_write, target::device> B(b_buf,    \
+                                                                     cgh);     \
+      accessor<float, 2, access::mode::read_write, target::device> C(c_buf,    \
+                                                                     cgh);     \
+      accessor<int, 1, access::mode::write, target::device> ERR(err_buf, cgh); \
+      cgh.parallel_for(N / SZ, [=](id<1> index) {                              \
+        marray<bfloat16, SZ> arg0, arg1, arg2;                                 \
+        for (int i = 0; i < SZ; i++) {                                         \
+          arg0[i] = A[index][i];                                               \
+          arg1[i] = B[index][i];                                               \
+          arg2[i] = C[index][i];                                               \
+        }                                                                      \
+        marray<bfloat16, SZ> res = NAME(arg0, arg1, arg2);                     \
+        for (int i = 0; i < SZ; i++) {                                         \
+          if (check(make_fp32(res[i].raw()),                                   \
+                    NAME(A[index][i], B[index][i], C[index][i]))) {            \
+            ERR[0] = 1;                                                        \
+          }                                                                    \
+        }                                                                      \
+      });                                                                      \
+    });                                                                        \
+  }                                                                            \
+  assert(err == 0);
+
+#define TEST_BUILTIN_3(NAME)                                                   \
+  TEST_BUILTIN_3_SCAL_IMPL(NAME)                                               \
+  TEST_BUILTIN_3_ARR_IMPL(NAME, 1)                                             \
+  TEST_BUILTIN_3_ARR_IMPL(NAME, 2)                                             \
+  TEST_BUILTIN_3_ARR_IMPL(NAME, 3)                                             \
+  TEST_BUILTIN_3_ARR_IMPL(NAME, 4)                                             \
+  TEST_BUILTIN_3_ARR_IMPL(NAME, 5)
 
 int main() {
   queue q;
