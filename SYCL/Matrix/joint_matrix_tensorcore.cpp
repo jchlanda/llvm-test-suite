@@ -130,8 +130,8 @@ void test(queue &q) {
     // currently bfloat16 has to be initialized on device
     if constexpr (std::is_same<T1, bfloat16>::value) {
       q.submit([&](handler &cgh) {
-        accessor<T1, 1, access::mode::read_write, target::device>
-            accA(bufA, cgh);
+        accessor<T1, 1, access::mode::read_write, target::device> accA(bufA,
+                                                                       cgh);
 
         cgh.parallel_for<KernelName<bfloat16, class copyA, M, K, N>>(
             range<1>(Big_M * Big_K), [=](item<1> item) {
@@ -141,8 +141,8 @@ void test(queue &q) {
       });
 
       q.submit([&](handler &cgh) {
-        accessor<T1, 1, access::mode::read_write, target::device>
-            accB(bufB, cgh);
+        accessor<T1, 1, access::mode::read_write, target::device> accB(bufB,
+                                                                       cgh);
 
         cgh.parallel_for<KernelName<bfloat16, class copyB, M, K, N>>(
             range<1>(Big_K * Big_N), [=](item<1> item) {
@@ -153,22 +153,17 @@ void test(queue &q) {
     }
 
     q.submit([&](handler &cgh) {
-    accessor<T1, 1, access::mode::read_write, target::device>
-        accA(bufA, cgh);
-    accessor<T1, 1, access::mode::read_write, target::device>
-        accB(bufB, cgh);
-    accessor<T2, 1, access::mode::read_write, target::device>
-        accC(bufC, cgh);
-    accessor<T2, 1, access::mode::read_write, target::device>
-        accD(bufD, cgh);
+      accessor<T1, 1, access::mode::read_write, target::device> accA(bufA, cgh);
+      accessor<T1, 1, access::mode::read_write, target::device> accB(bufB, cgh);
+      accessor<T2, 1, access::mode::read_write, target::device> accC(bufC, cgh);
+      accessor<T2, 1, access::mode::read_write, target::device> accD(bufD, cgh);
 
       range<2> LocalRange = {1, N_THREADS_PER_MATRIX_OP};
       range<2> GlobalRange = {Sub_Tiles_M,
                               Sub_Tiles_N * N_THREADS_PER_MATRIX_OP};
 
       cgh.parallel_for<KernelName<T1, T2, M, K, N>>(
-          nd_range<2>(GlobalRange, LocalRange),
-          [=](nd_item<2> item) {
+          nd_range<2>(GlobalRange, LocalRange), [=](nd_item<2> item) {
             sub_group sg = item.get_sub_group();
             const auto m =
                 item.get_group().get_group_id()[0]; // row id of current
