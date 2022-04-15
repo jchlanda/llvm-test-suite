@@ -200,6 +200,26 @@ bool check(float a, float b) {
   TEST_BUILTIN_3_ARR_IMPL(NAME, 4)                                             \
   TEST_BUILTIN_3_ARR_IMPL(NAME, 5)
 
+#define TEST_BUILTIN_2_NAN(NAME)                                               \
+  {                                                                            \
+    buffer<int> err_buf(&err, 1);                                              \
+    buffer<float> nan_buf(&check_nan, 1);                                      \
+    q.submit([&](handler &cgh) {                                               \
+      accessor<int, 1, access::mode::write, target::device> ERR(err_buf, cgh); \
+      accessor<float, 1, access::mode::write, target::device> checkNAN(        \
+          nan_buf, cgh);                                                       \
+      cgh.single_task([=]() {                                                  \
+        checkNAN[0] = make_fp32(NAME(bfloat16{NAN}, bfloat16{NAN}).raw());     \
+        if ((make_fp32(NAME(bfloat16{2}, bfloat16{NAN}).raw()) != 2) ||        \
+            (make_fp32(NAME(bfloat16{NAN}, bfloat16{2}).raw()) != 2)) {        \
+          ERR[0] = 1;                                                          \
+        }                                                                      \
+      });                                                                      \
+    });                                                                        \
+  }                                                                            \
+  assert(err == 0);                                                            \
+  assert(std::isnan(check_nan));
+
 int main() {
   queue q;
 
@@ -222,6 +242,10 @@ int main() {
     TEST_BUILTIN_2(fmin);
     TEST_BUILTIN_2(fmax);
     TEST_BUILTIN_3(fma);
+
+    float check_nan = 0;
+    TEST_BUILTIN_2_NAN(fmin);
+    TEST_BUILTIN_2_NAN(fmax);
   }
   return 0;
 }
